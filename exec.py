@@ -56,7 +56,7 @@ if USERS_PATH.is_file():
         users = json.loads(usersfile)
     else:
         users = dict()
-    
+
     print(json.dumps(users, indent=4, ensure_ascii=False))
 else:
     users = dict()
@@ -69,7 +69,7 @@ if USERS_NAME_TO_ID_PATH.is_file():
         names_to_id = json.loads(usersfile)
     else:
         names_to_id = dict()
-    
+
     print(json.dumps(users, indent=4, ensure_ascii=False))
 else:
     names_to_id = dict()
@@ -431,6 +431,32 @@ async def manage(msg:Message):
                 return await wrong_arg(msg, act, 2)
     finally:
         if msg.chat.id in input_queues:
+            del input_queues[msg.chat.id]
+
+#Команда смены имени
+@bot.message_handler(commands=['rename'])
+async def rename(msg:Message):
+    global users, names_to_id, active_sessions, input_queues
+    if msg.from_user.id not in active_sessions:
+        return await bot.send_message(msg.chat.id, 'Вы не вошли в аккант')
+    if msg.from_user.id in input_queues:
+        return await bot.send_message(msg.chat.id, 'Поток уже занят другой командой')
+
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
+    user = active_sessions[msg.from_user.id]
+    try:
+        await bot.send_message(msg.chat.id, 'Введите новое имя')
+        name = await queue.get()
+        user.name = name
+       
+        active_sessions[msg.from_user.id] = user
+        users[str(msg.from_user.id)] = asdict(user)
+        names_to_id[user.name] = str(msg.from_user.id)
+        await save_grps()
+        return await bot.send_message(msg.chat.id, 'Имя изменено')
+    finally:
+        if msg.from_user.id in input_queues:
             del input_queues[msg.chat.id]
 
 #Получение любого ввода, не являющегося определённой команды
