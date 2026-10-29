@@ -162,6 +162,15 @@ async def empty_week(num:int):
                     Day(6, 'Суббота', [])
                 ])
 
+#Красивая строка с расписанием нндели
+async def get_week_str(week:Week):
+    str_week = f'Неделя No. {week.num}\n'
+    for day in week.days:
+        str_week += f'\n{day.name}:\n'
+        for lesson in day.lessons:
+            str_week += f'{lesson.num}. {lesson.name}, {lesson.cab} у {lesson.teacher}\n'
+    return str_week
+
 #Управление неделями
 async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
     global grouplist
@@ -172,8 +181,33 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             group.weeks.append(await empty_week(len(group.weeks) + 1))
             await bot.send_message(msg.chat.id, 'Добавлена пустая неделя')
             return group
-
+            #Показать количество недель
+        case 'l':
+            if not group.weeks:
+                return await bot.send_message('Расписание для группы отсутствует')
+            return await bot.send_message(msg.chat.id, f'В группе есть {len(group.weeks)} неделя(ь)(и) с расписанием')
+            #Просмотр расписания недели
+        case 's':
+            await bot.send_message(msg.chat.id, 'Введите номер недели для просмотра')
+            #Вводится номер
+            wnum = await queue.get()
+            try: 
+                wnum = int(wnum) - 1
+            except ValueError:
+                return await wrong_arg(msg, wnum, 1)
+	#Он должен быть корректным номером недели
+            if wnum >= len(group.weeks) or wnum < 0:
+                return await wrong_arg(msg, wnum, 1)
             
+            schedule = await get_week_str(group.weeks[wnum])
+            return await bot.send_message(msg.chat.id, schedule)
+            
+#Сохранение пользователей
+async def save_usr():
+    with open(USERS_PATH, 'w') as usersfile:
+            usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
+    with open(USERS_NAME_TO_ID_PATH, 'w') as usersfile:
+            usersfile.write(json.dumps(names_to_id, indent=4, ensure_ascii=False))           
 
 #Команда start/help
 @bot.message_handler(commands=['start', 'help'])
@@ -214,10 +248,7 @@ async def reg(msg:Message):
         users[str(msg.from_user.id)] = asdict(user)
         names_to_id[name] = str(msg.from_user.id)
 
-        with open(USERS_PATH, 'w') as usersfile:
-            usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
-        with open(USERS_NAME_TO_ID_PATH, 'w') as usersfile:
-            usersfile.write(json.dumps(names_to_id, indent=4, ensure_ascii=False))
+        await save_usr()
 
         await bot.reply_to(msg, "Регистрация успешна!")
         print(names_to_id)
@@ -446,15 +477,19 @@ async def rename(msg:Message):
     input_queues[msg.chat.id] = queue
     user = active_sessions[msg.from_user.id]
     try:
-        await bot.send_message(msg.chat.id, 'Введите новое имя')
+        await bot.send_message(msg.chat.id, 'Введите новое имя. & для отмены')
         name = await queue.get()
-        user.name = name
+        if name == '&':
+            return await bot.send_message(msg.chat.id, 'Отменено')
+        del names_to_id[user.name]
+        del active_sessions[msg.from_user.id]
+        del users[str(msg.from_user.id)]
+        user.name = name   
        
-        active_sessions[msg.from_user.id] = user
         users[str(msg.from_user.id)] = asdict(user)
         names_to_id[user.name] = str(msg.from_user.id)
-        await save_grps()
-        return await bot.send_message(msg.chat.id, 'Имя изменено')
+        await save_usr()
+        return await bot.send_message(msg.chat.id, 'Имя изменено. Войдите в аккаунт заново')
     finally:
         if msg.from_user.id in input_queues:
             del input_queues[msg.chat.id]
