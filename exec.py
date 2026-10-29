@@ -201,6 +201,8 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             
             schedule = await get_week_str(group.weeks[wnum])
             return await bot.send_message(msg.chat.id, schedule)
+        case _:
+            return await wrong_arg(msg, act, 3)
             
 #Сохранение пользователей
 async def save_usr():
@@ -455,6 +457,8 @@ async def manage(msg:Message):
                 act = line[-1]
 		#Третий аргумент передаётся в функцию управления неделями
                 group = await week_manage(msg, group, act, queue)
+                if not isinstance(group, Group):
+                    return
                 return await save_grps()
 
 	    #В ином случае выход из manage
