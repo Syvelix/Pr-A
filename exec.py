@@ -1,6 +1,6 @@
 import asyncio, pickle, json
 from hashlib import sha256
-from dacite import from_dict
+from dacite import from_dict, Config
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from telebot.async_telebot import AsyncTeleBot
@@ -25,7 +25,7 @@ class User:
 class Group:
     members: list[User]
     name: str
-    weeks: list[Week]
+    weeks: dict[int, Week]
 
 #Класс для хранения пар
 @dataclass
@@ -74,6 +74,8 @@ if USERS_NAME_TO_ID_PATH.is_file():
 else:
     names_to_id = dict()
 
+
+week_conf = Config(cast=[int], type_hooks={dict[int, Week]: lambda data: {int(key): from_dict(Week, value, config=week_conf) for key, value in data.items()}})
 #Получение списка с сохранёнными группами
 if GROUPS_PATH.is_file():
     with open(GROUPS_PATH) as groupfile:
@@ -81,9 +83,9 @@ if GROUPS_PATH.is_file():
     if groupfile:
         groups = json.loads(groupfile)
         grouplist = []
-	#Группы из словаря преобразовываются в список из объектов  Group
+	#Группы из словаря преобразовываются в список из объектов Group
         for group in groups:
-            group = from_dict(Group, groups[group])
+            group = from_dict(Group, groups[group], config=week_conf)
             grouplist.append(group)
         grouplist.sort(key=lambda group: group.name)
     else:
@@ -171,6 +173,13 @@ async def get_week_str(week:Week):
             str_week += f'{lesson.num}. {lesson.name}, {lesson.cab} у {lesson.teacher}\n'
     return str_week
 
+#Красивый список номеров учебных недель
+async def get_weeks_str(group:Group):
+    str_weeks = f'Номера учебных недель группы {group.name}:\n\n'
+    for week in sorted(group.weeks.values(), key=lambda week: week.num):
+        str_weeks += f'{week.num}.\n'
+    return str_weeks
+
 #Управление неделями
 async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
     global grouplist
@@ -178,29 +187,84 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
     match act:
 	#a значит add. Добавляет пустую неделю в группу, возвращает группу
         case 'a':
-            group.weeks.append(await empty_week(len(group.weeks) + 1))
+            wnum = max(group.weeks.keys(), default=0) + 1
+            group.weeks[wnum] = await empty_week(wnum)
             await bot.send_message(msg.chat.id, 'Добавлена пустая неделя')
             return group
-            #Показать количество недель
+        #Показать количество недель
         case 'l':
             if not group.weeks:
-                return await bot.send_message('Расписание для группы отсутствует')
-            return await bot.send_message(msg.chat.id, f'В группе есть {len(group.weeks)} неделя(ь)(и) с расписанием')
-            #Просмотр расписания недели
+                return await bot.send_message(msg.chat.id, 'Расписание для группы отсутствует')
+            
+            await bot.send_message(msg.chat.id, f'В группе есть {len(group.weeks)} неделя(ь)(и) с расписанием')
+            return await bot.send_message(msg.chat.id, await get_weeks_str(group))
+        #Просмотр расписания недели
         case 's':
+            if not group.weeks:
+                return await bot.send_message(msg.chat.id, 'Расписание для группы отсутствует')
+
+            await bot.send_message(msg.chat.id, await get_weeks_str(group))
             await bot.send_message(msg.chat.id, 'Введите номер недели для просмотра')
             #Вводится номер
             wnum = await queue.get()
             try: 
-                wnum = int(wnum) - 1
+                wnum = int(wnum)
             except ValueError:
                 return await wrong_arg(msg, wnum, 1)
-	#Он должен быть корректным номером недели
-            if wnum >= len(group.weeks) or wnum < 0:
+	        #Он должен быть корректным номером недели
+            if wnum not in group.weeks:
                 return await wrong_arg(msg, wnum, 1)
             
             schedule = await get_week_str(group.weeks[wnum])
             return await bot.send_message(msg.chat.id, schedule)
+        #Изменить неделю
+        case 'e':
+            if not group.weeks:
+                return await bot.send_message(msg.chat.id, 'Расписание для группы отсутствует')
+            
+            await bot.send_message(msg.chat.id, await get_weeks_str(group))
+            await bot.send_message(msg.chat.id, 'Введите действие над неделей')
+            line = await queue.get()
+            line = line.split(' ')
+            line = list(reversed(line))
+
+            #Первый аргумент должен быть номером недели в списке group.weeks
+            try: 
+                wnum = int(line[-1])
+            except ValueError:
+                return await wrong_arg(msg, line[-1], 1)
+            #Он должен быть корректным номером недели
+            if wnum not in group.weeks:
+                print(wnum, group.weeks)
+                return await wrong_arg(msg, line[-1], 1)
+            line.pop()
+            #Если кроме номера недели ничего не передали, то аргументов недостаточно
+            if not line:
+                return await few_args(msg)
+            week = group.weeks[wnum]
+
+            #Второй аргумент - действие над неделей
+            act = line[-1]
+            match act:
+                #n значит num
+                case 'n':
+                    await bot.send_message(msg.chat.id, 'Введите новый номер недели')
+                    num = await queue.get()
+                    try:
+                        num = int(num)
+                    except ValueError:
+                        return await wrong_arg(msg, num, 2)
+                    week.num = int(num)
+                    group.weeks[wnum] = week
+                    await bot.send_message(msg.chat.id, 'Номер недели изменён')
+                    return group
+                #d значит delete
+                case 'd':
+                    del group.weeks[wnum]
+                    await bot.send_message(msg.chat.id, f'Неделя {wnum} удалена')
+                    return group
+                case _:
+                    return await wrong_arg(msg, act, 2)
         case _:
             return await wrong_arg(msg, act, 3)
             
@@ -233,15 +297,13 @@ async def start(msg:Message):
 #Команда регистрации
 @bot.message_handler(commands=['reg'])
 async def reg(msg:Message):
-    global users, names_to_id, input_queues
+    global users, names_to_id, active_sessions, input_queues
     if msg.chat.id in input_queues:
         return await busy(msg)
     if msg.from_user.id in active_sessions:
-            await bot.send_message(msg.chat.id, 'Сначала нужно выйти из аккаунта')
-            return
+        return await bot.send_message(msg.chat.id, 'Сначала нужно выйти из аккаунта')
     if str(msg.from_user.id) in users and ' force' not in msg.text:
-        await bot.send_message(msg.chat.id, 'К вашему id уже привязан аккаунт Чтобы его пересоздать, используйте\n /reg force')
-        return
+        return await bot.send_message(msg.chat.id, 'К вашему id уже привязан аккаунт Чтобы его пересоздать, используйте\n /reg force')
 
     queue = asyncio.Queue()
     input_queues[msg.chat.id] = queue
@@ -252,16 +314,19 @@ async def reg(msg:Message):
         await bot.send_message(msg.chat.id, "Введите имя")
         name = await queue.get()
         if await is_taken(name, names_to_id):
-            await bot.send_message(msg.chat.id, 'Имя уже занято, попробуйте другое')
-            return await reg(msg)
+            return await bot.send_message(msg.chat.id, 'Имя уже занято')
 
         await bot.send_message(msg.chat.id, "Введите пароль")
         password = await queue.get()
         hashword = sha256(password.encode('utf-8'))
 
+        if str(msg.from_user.id) in users:
+            del names_to_id[from_dict(User, users[str(msg.from_user.id)]).name]
+
         user = User(str(msg.from_user.id), name, hashword.hexdigest(), 'normal')
 
         users[str(msg.from_user.id)] = asdict(user)
+        
         names_to_id[name] = str(msg.from_user.id)
 
         await save_usr()
@@ -383,7 +448,7 @@ async def mkgrp(msg:Message):
         if await is_taken(name, [group.name for group in grouplist]):
             return await bot.send_message(msg.chat.id, 'Группа уже существует')
 
-        group = Group([], name, [])
+        group = Group([], name, dict())
 
         grouplist.append(group)
         await save_grps()
