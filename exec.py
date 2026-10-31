@@ -55,6 +55,7 @@ class RootKey:
     key: str
     type: str
     maker: str
+    status: str
 
 #Получение словаря с сохранёнными пользователями
 if USERS_PATH.is_file():
@@ -621,10 +622,10 @@ async def repass(msg:Message):
             del input_queues[msg.chat.id]
 
 #Команда для создания ключей повышения
+#Доступна только для root-аккаунтов
 @bot.message_handler(commands=['rootkey'])
 async def rootkey(msg:Message):
     global rootkeys, input_queues
-    #Доступна только для root-аккаунтов
     if msg.chat.id in input_queues:
         return await busy(msg)
     perms = await permcheck(msg, {'root'})
@@ -635,10 +636,11 @@ async def rootkey(msg:Message):
     input_queues[msg.chat.id] = queue
 
     try:
-        await bot.send_message(msg.chat.id, 'Введите команду\nadd - создать ключ\ndel - удалить ключ')
+        await bot.send_message(msg.chat.id, 'Введите команду\nadd - создать ключ\noff - отключить ключ')
         act = await queue.get()
 
         match act:
+            #Создание ключа
             case 'add':
                 rkey = str(randint(0, 28918928919228291923))
                 while rkey in [key.key for key in rootkeys]:
@@ -651,7 +653,6 @@ async def rootkey(msg:Message):
                 if ktype == '&':
                     return await bot.send_message(msg.chat.id, 'Отменено')
 
-
                 kboard = InlineKeyboardMarkup()
                 kboard.add(InlineKeyboardButton(text="Скопировать", copy_text=CopyTextButton(rkey)))
 
@@ -659,26 +660,37 @@ async def rootkey(msg:Message):
                 rkey = sha256(rkey.encode('utf-8'))
 
                 match ktype:
+                    #Ключ с полным доступом
                     case '1':
-                        rkey = RootKey(rkey.hexdigest(), 'root', active_sessions[msg.from_user.id].name)
+                        rkey = RootKey(rkey.hexdigest(), 'root', active_sessions[msg.from_user.id].name, 'active')
+                    #Ключ с доступом учителя
                     case '2':
-                        rkey = RootKey(rkey.hexdigest(), 'teacher', active_sessions[msg.from_user.id].name)
+                        rkey = RootKey(rkey.hexdigest(), 'teacher', active_sessions[msg.from_user.id].name, 'active')
                 rootkeys.append(rkey)
-
-            case 'del':
+            #Отключение ключа
+            case 'off':
                 if not rootkeys:
                     return await bot.send_message(msg.chat.id, 'Ключи повышения отсутствуют')
 
-                await bot.send_message(msg.chat.id, 'Введите ключ для удаления')
+                await bot.send_message(msg.chat.id, 'Введите ключ для отключения')
                 rkey = await queue.get()
                 rkey = sha256(rkey.encode('utf-8')).hexdigest()
 
                 rkeys = [rkey.key for rkey in rootkeys]
                 if rkey not in rkeys:
                     return await bot.send_message(msg.chat.id, "Недействительный ключ")
+                
                 rkey = [key for key in rootkeys if key.key == rkey][0]
-                rootkeys.remove(rkey)
-                await bot.send_message(msg.chat.id, 'Ключ удалён')
+
+                if rkey.status == 'disabled':
+                    return await bot.send_message(msg.chat.id, 'Ключ уже был отключён')
+                
+                nrkey = rkey
+                nrkey.status = 'disabled'
+                rootkeys[rootkeys.index(rkey)] = nrkey
+                await bot.send_message(msg.chat.id, 'Ключ отключён')
+            case _:
+                return await wrong_arg(msg, act, 1)
         await save_rkeys()
     finally:
         if msg.chat.id in input_queues:
@@ -711,7 +723,11 @@ async def boost(msg:Message):
             return await bot.send_message(msg.chat.id, 'Недействительный ключ')
 
         rootkey = [key for key in rootkeys if key.key == rkey][0]
-        rootkeys.remove(rootkey)
+        if rootkey.status == 'disabled':
+            return await bot.send_message(msg.chat.id, 'Ключ отключён. Возможно уже был активирован кем-то ещё')
+        nrootkey = rootkey
+        nrootkey.status = 'disabled'
+        rootkeys[rootkeys.index(rootkey)] = nrootkey
 
         await save_usr(user, msg, rootkey.type, 'acc_type', kick = False)
         await save_rkeys()
