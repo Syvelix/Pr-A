@@ -56,6 +56,7 @@ class RootKey:
     type: str
     maker: str
     status: str
+    used_by: str = ''
 
 #Получение словаря с сохранёнными пользователями
 if USERS_PATH.is_file():
@@ -687,6 +688,7 @@ async def rootkey(msg:Message):
                 
                 nrkey = rkey
                 nrkey.status = 'disabled'
+                nrkey.used_by = '&'
                 rootkeys[rootkeys.index(rkey)] = nrkey
                 await bot.send_message(msg.chat.id, 'Ключ отключён')
             case _:
@@ -727,6 +729,7 @@ async def boost(msg:Message):
             return await bot.send_message(msg.chat.id, 'Ключ отключён. Возможно уже был активирован кем-то ещё')
         nrootkey = rootkey
         nrootkey.status = 'disabled'
+        nrootkey.used_by = user.name
         rootkeys[rootkeys.index(rootkey)] = nrootkey
 
         await save_usr(user, msg, rootkey.type, 'acc_type', kick = False)
