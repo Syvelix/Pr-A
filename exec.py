@@ -4,12 +4,14 @@ from dacite import from_dict, Config
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import Message
+from telebot.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton, CallbackQuery
+from random import randint
 
 TOKEN_PATH = Path('./Data/TOKEN.dat').resolve()
 USERS_PATH = Path('./Data/users.json').resolve()
 USERS_NAME_TO_ID_PATH = Path('./Data/user_name_to_id.json').resolve()
 GROUPS_PATH = Path('./Data/groups.json').resolve()
+ROOTKEYS_PATH = Path('./Data/rootkeys.json').resolve()
 
 #Класс для хранения пользователей
 @dataclass
@@ -47,6 +49,12 @@ class Day:
 class Week:
     num: int
     days: list[Day]
+
+@dataclass
+class RootKey:
+    key: str
+    type: str
+    maker: str
 
 #Получение словаря с сохранёнными пользователями
 if USERS_PATH.is_file():
@@ -93,6 +101,15 @@ if GROUPS_PATH.is_file():
 else:
     grouplist = []
 
+#Получение списка с ключами повышения
+if ROOTKEYS_PATH.is_file():
+    with open(ROOTKEYS_PATH) as rkeysfile:
+        rkeysfile = rkeysfile.read()
+    rootkeys = json.loads(rkeysfile)
+    rootkeys = [from_dict(RootKey, data=key) for key in rootkeys]
+else:
+    rootkeys = []
+
 #Словарь очередей ввода, ключи - id чатов
 input_queues: dict[int, asyncio.Queue] = dict()
 #Словарь активных сессий, ключи - id пользователей
@@ -112,7 +129,6 @@ bot = AsyncTeleBot(TOKEN);
 #Если во время выполнения команды запрашивают ещё одну
 async def busy(msg):
     await bot.reply_to(msg, 'Поток уже занят другой командой')
-    return None
 
 #Красивый список групп
 async def get_groups_str():
@@ -151,6 +167,36 @@ async def save_grps():
         grdict[gp.name] = asdict(gp)
     with open(GROUPS_PATH, 'w') as groupfile:
         groupfile.write(json.dumps(grdict, indent=4, ensure_ascii=False))
+
+#Сохранение пользователей как json
+async def save_usr(user:User = None, msg:Message = None, newvalue = None, vtype:str = None, kick=True):
+    if user != None:
+        global names_to_id, active_sessions, users
+        del names_to_id[user.name]
+        del active_sessions[msg.from_user.id]
+        del users[str(msg.from_user.id)]
+        if vtype == 'name':
+            user.name = newvalue
+        elif vtype == 'password':
+            hashword = sha256(newvalue.encode('utf-8'))
+            user.password = hashword.hexdigest()
+        elif vtype == 'acc_type':
+            user.acc_type = newvalue
+ 
+        users[str(msg.from_user.id)] = asdict(user)
+        names_to_id[user.name] = str(msg.from_user.id)
+        if not kick:
+            active_sessions[msg.from_user.id] = user
+
+    with open(USERS_PATH, 'w') as usersfile:
+            usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
+    with open(USERS_NAME_TO_ID_PATH, 'w') as usersfile:
+            usersfile.write(json.dumps(names_to_id, indent=4, ensure_ascii=False))
+
+async def save_rkeys():
+    with open(ROOTKEYS_PATH, 'w') as rkeysfile:
+        to_save = [asdict(key) for key in rootkeys]
+        rkeysfile.write(json.dumps(to_save, indent=4, ensure_ascii=False))
 
 #Генерирует пустую неделю
 async def empty_week(num:int):
@@ -217,7 +263,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             
             schedule = await get_week_str(group.weeks[wnum])
             return await bot.send_message(msg.chat.id, schedule)
-        #Изменить неделю
+        #e значит edit
         case 'e':
             if not group.weeks:
                 return await bot.send_message(msg.chat.id, 'Расписание для группы отсутствует')
@@ -266,28 +312,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                 case _:
                     return await wrong_arg(msg, act, 2)
         case _:
-            return await wrong_arg(msg, act, 3)
-            
-#Сохранение пользователей
-async def save_usr(user:User = None, msg:Message = None, newvalue = None, vtype:str = None):
-    if user != None:
-        global names_to_id, active_sessions, users
-        del names_to_id[user.name]
-        del active_sessions[msg.from_user.id]
-        del users[str(msg.from_user.id)]
-        if vtype == 'name':
-            user.name = newvalue
-        elif vtype == 'password':
-            hashword = sha256(newvalue.encode('utf-8'))
-            user.password = hashword.hexdigest()
- 
-        users[str(msg.from_user.id)] = asdict(user)
-        names_to_id[user.name] = str(msg.from_user.id)
-
-    with open(USERS_PATH, 'w') as usersfile:
-            usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
-    with open(USERS_NAME_TO_ID_PATH, 'w') as usersfile:
-            usersfile.write(json.dumps(names_to_id, indent=4, ensure_ascii=False))           
+            return await wrong_arg(msg, act, 3)         
 
 #Команда start/help
 @bot.message_handler(commands=['start', 'help'])
@@ -344,8 +369,8 @@ async def log(msg:Message):
     if msg.chat.id in input_queues:
         return await busy(msg)
     if msg.from_user.id in active_sessions:
-        await bot.send_message(msg.chat.id, f'Вы уже вошли как {active_sessions[msg.from_user.id].name}')
-        return
+        return await bot.send_message(msg.chat.id, f'Вы уже вошли как {active_sessions[msg.from_user.id].name}')
+        
     
     queue = asyncio.Queue()
     input_queues[msg.chat.id] = queue
@@ -464,12 +489,12 @@ async def mkgrp(msg:Message):
 async def manage(msg:Message):
     global input_queues, grouplist
     perms = await permcheck(msg)
+    if msg.chat.id in input_queues:
+        return await busy(msg)
     if perms != None:
         await bot.send_message(msg.chat.id, perms)
         return
-    if msg.chat.id in input_queues:
-        return await busy(msg)
-
+    
     strgroups = await get_groups_str()
     if strgroups == None:
         await bot.send_message(msg.chat.id, 'Ещё не создано ни одной группы. Используйте /mkgrp для создания')
@@ -594,7 +619,108 @@ async def repass(msg:Message):
     finally:
         if msg.chat.id in input_queues:
             del input_queues[msg.chat.id]
-        
+
+#Команда для создания ключей повышения
+@bot.message_handler(commands=['rootkey'])
+async def rootkey(msg:Message):
+    global rootkeys, input_queues
+    #Доступна только для root-аккаунтов
+    if msg.chat.id in input_queues:
+        return await busy(msg)
+    perms = await permcheck(msg, {'root'})
+    if perms != None:
+        return await bot.send_message(msg.chat.id, perms)
+
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
+
+    try:
+        await bot.send_message(msg.chat.id, 'Введите команду\nadd - создать ключ\ndel - удалить ключ')
+        act = await queue.get()
+
+        match act:
+            case 'add':
+                rkey = str(randint(0, 28918928919228291923))
+                while rkey in [key.key for key in rootkeys]:
+                    rkey = str(randint(0, 28918928919228291923))
+
+                ktype = ''
+                while ktype not in {'1', '2', '&'}:
+                    await bot.send_message(msg.chat.id, 'Выберите тип ключа\n1. root (полный доступ)\n2. teacher (доступ к неделям и группам)\n\n& - отмена')
+                    ktype = await queue.get()
+                if ktype == '&':
+                    return await bot.send_message(msg.chat.id, 'Отменено')
+
+
+                kboard = InlineKeyboardMarkup()
+                kboard.add(InlineKeyboardButton(text="Скопировать", copy_text=CopyTextButton(rkey)))
+
+                await bot.send_message(msg.chat.id, f'Ключ создан: ||{rkey}||', parse_mode='MarkdownV2', reply_markup=kboard)
+                rkey = sha256(rkey.encode('utf-8'))
+
+                match ktype:
+                    case '1':
+                        rkey = RootKey(rkey.hexdigest(), 'root', active_sessions[msg.from_user.id].name)
+                    case '2':
+                        rkey = RootKey(rkey.hexdigest(), 'teacher', active_sessions[msg.from_user.id].name)
+                rootkeys.append(rkey)
+
+            case 'del':
+                if not rootkeys:
+                    return await bot.send_message(msg.chat.id, 'Ключи повышения отсутствуют')
+
+                await bot.send_message(msg.chat.id, 'Введите ключ для удаления')
+                rkey = await queue.get()
+                rkey = sha256(rkey.encode('utf-8')).hexdigest()
+
+                rkeys = [rkey.key for rkey in rootkeys]
+                if rkey not in rkeys:
+                    return await bot.send_message(msg.chat.id, "Недействительный ключ")
+                rkey = [key for key in rootkeys if key.key == rkey][0]
+                rootkeys.remove(rkey)
+                await bot.send_message(msg.chat.id, 'Ключ удалён')
+        await save_rkeys()
+    finally:
+        if msg.chat.id in input_queues:
+            del input_queues[msg.chat.id]
+
+#Команда повышения аккаунта
+@bot.message_handler(commands=['boost'])
+async def boost(msg:Message):
+    global rootkeys, input_queues
+    if msg.from_user.id not in active_sessions:
+        return await bot.send_message(msg.chat.id, 'Вы не вошли в аккаунт')
+    if msg.chat.id in input_queues:
+        return await busy(msg)
+
+    rkeys = [rkey.key for rkey in rootkeys]
+
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
+
+    try:
+        user = active_sessions[msg.from_user.id]
+        if user.acc_type == 'root':
+            return await bot.send_message(msg.chat.id, 'Вы уже root!')
+
+        await bot.send_message(msg.chat.id, 'Введите ключ повышения')
+        rkey = await queue.get()
+        rkey = sha256(rkey.encode('utf-8')).hexdigest()
+
+        if rkey not in rkeys:
+            return await bot.send_message(msg.chat.id, 'Недействительный ключ')
+
+        rootkey = [key for key in rootkeys if key.key == rkey][0]
+        rootkeys.remove(rootkey)
+
+        await save_usr(user, msg, rootkey.type, 'acc_type', kick = False)
+        await save_rkeys()
+        user = active_sessions[msg.from_user.id]
+        await bot.send_message(msg.chat.id, f'Тип аккаунта изменён на {user.acc_type}')
+    finally:
+        if msg.chat.id in input_queues:
+            del input_queues[msg.chat.id]
+
 
 #Получение любого ввода, не являющегося определённой команды
 @bot.message_handler(func=lambda msg: msg.text != None and not msg.text.startswith('/'))
