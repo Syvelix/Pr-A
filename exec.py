@@ -205,7 +205,21 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             return await wrong_arg(msg, act, 3)
             
 #Сохранение пользователей
-async def save_usr():
+async def save_usr(user:User = None, msg:Message = None, newvalue = None, vtype:str = None):
+    if user != None:
+        global names_to_id, active_sessions, users
+        del names_to_id[user.name]
+        del active_sessions[msg.from_user.id]
+        del users[str(msg.from_user.id)]
+        if vtype == 'name':
+            user.name = newvalue
+        elif vtype == 'password':
+            hashword = sha256(newvalue.encode('utf-8'))
+            user.password = hashword.hexdigest()
+ 
+        users[str(msg.from_user.id)] = asdict(user)
+        names_to_id[user.name] = str(msg.from_user.id)
+
     with open(USERS_PATH, 'w') as usersfile:
             usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
     with open(USERS_NAME_TO_ID_PATH, 'w') as usersfile:
@@ -404,9 +418,9 @@ async def manage(msg:Message):
 
         await bot.send_message(msg.chat.id, 'Введите действие над группой или & для отмены.\nДля справки используйте /manhelp')
 
-	#Аргументы передаются одной слитной строкой
+	#Аргументы передаются одной через пробел
         line = await queue.get()
-        line = [x for x in line]
+        line = line.split(' ')
 	#Список разворачивается для удобства, поэтому аргументы берутся с конца списка
         line = list(reversed(line))
 	#Символ & на первой позиции отменяет manage
@@ -485,18 +499,37 @@ async def rename(msg:Message):
         name = await queue.get()
         if name == '&':
             return await bot.send_message(msg.chat.id, 'Отменено')
-        del names_to_id[user.name]
-        del active_sessions[msg.from_user.id]
-        del users[str(msg.from_user.id)]
-        user.name = name   
-       
-        users[str(msg.from_user.id)] = asdict(user)
-        names_to_id[user.name] = str(msg.from_user.id)
-        await save_usr()
+        await save_usr(user, msg, name, 'name')
         return await bot.send_message(msg.chat.id, 'Имя изменено. Войдите в аккаунт заново')
     finally:
         if msg.from_user.id in input_queues:
             del input_queues[msg.chat.id]
+
+#Команда смены пароля
+@bot.message_handler(commands=['repass'])
+async def repass(msg:Message):
+    global users, names_to_id, active_sessions, input_queues
+    if msg.from_user.id not in active_sessions:
+        return await bot.send_message(msg.chat.id, 'Вы не вошли в аккант')
+    if msg.from_user.id in input_queues:
+        return await bot.send_message(msg.chat.id, 'Поток уже занят другой командой')
+
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
+    user = active_sessions[msg.from_user.id]
+
+    try:
+        await bot.send_message(msg.chat.id, 'Введите новый пароль. & для отмены')
+        password = await queue.get()
+        if password == '&':
+            return await bot.send_message(msg.chat.id, 'Отменено')
+
+        await save_usr(user, msg, password, 'password')
+        return await bot.send_message(msg.chat.id, 'Пароль изменён. Войдите в аккаунт заново')
+    finally:
+        if msg.chat.id in input_queues:
+            del input_queues[msg.chat.id]
+        
 
 #Получение любого ввода, не являющегося определённой команды
 @bot.message_handler(func=lambda msg: msg.text != None and not msg.text.startswith('/'))
