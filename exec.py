@@ -92,16 +92,16 @@ if GROUPS_PATH.is_file():
         groupfile = groupfile.read()
     if groupfile:
         groups = json.loads(groupfile)
-        grouplist = []
+        grouplist = list[Group]()
 	#Группы из словаря преобразовываются в список из объектов Group
         for group in groups:
             group = from_dict(Group, groups[group], config=week_conf)
             grouplist.append(group)
         grouplist.sort(key=lambda group: group.name)
     else:
-        grouplist = []
+        grouplist = list[Group]()
 else:
-    grouplist = []
+    grouplist = list[Group]()
 
 #Получение списка с ключами повышения
 if ROOTKEYS_PATH.is_file():
@@ -510,37 +510,44 @@ async def manage(msg:Message):
 
         await bot.send_message(msg.chat.id, 'Введите действие над группой или & для отмены.\nДля справки используйте /manhelp')
 
-	#Аргументы передаются одной через пробел
+	    #Аргументы передаются через пробел
         line = await queue.get()
         line = line.split(' ')
-	#Список разворачивается для удобства, поэтому аргументы берутся с конца списка
+	    #Список разворачивается для удобства, поэтому аргументы берутся с конца списка
         line = list(reversed(line))
-	#Символ & на первой позиции отменяет manage
+	    #Символ & на первой позиции отменяет manage
         if line[-1] == '&':
             return await bot.send_message(msg.chat.id, 'Отменено')
 
-	#Первый аргумент должен быть номером группы в списке grouplist
+	    #Первый аргумент должен быть номером группы в списке grouplist
         try: 
             gnum = int(line[-1]) - 1
         except ValueError:
             return await wrong_arg(msg, line[-1], 1)
-	#Он должен быть корректным номером группы
+	    #Он должен быть корректным номером группы
         if gnum >= len(grouplist) or gnum < 0:
             return await wrong_arg(msg, line[-1], 1)
         line.pop()
-	#Если кроме номера группы ничего не передали, то аргументов недостаточно
+	    #Если кроме номера группы ничего не передали, то аргументов недостаточно
         if not line:
             return await few_args(msg)
         group = grouplist[gnum]
 
-	#Второй аргумент - первичное действие
+	    #Второй аргумент - первичное действие
         act = line[-1]
 
         match act:
-	    #d значит delete. Удаление группы
+	        #d значит delete. Удаление группы
             case 'd':
-                await bot.send_message(msg.chat.id, f'Группа {grouplist[gnum].name} удалена')
+                group = grouplist[gnum]
+                for user in group.members:
+                    user.group = ""
+                    await save_usr(user, msg, kick=False)
+                    #ОБЯЗАТЕЛЬНО ПРОТЕСТИРОВАТЬ
+                    if int(user.idd) in active_sessions:
+                        await bot.send_message(int(user.idd), f'Группа {group.name} удалена. Выберите другую через /setgrp, если нужно')
                 del grouplist[gnum]
+                await bot.send_message(msg.chat.id, f'Группа {group.name} удалена')
                 return await save_grps()
             #r значит rename. Переименование группы
             case 'r':
@@ -551,23 +558,30 @@ async def manage(msg:Message):
                 if await is_taken(name, [group.name for group in grouplist]):
                     return await bot.send_message(msg.chat.id, 'Имя уже занято, отмена')
                 group.name = name
+
+                for user in group.members:
+                    user.group = group.name
+                    await save_usr(user, msg, kick=False)
+                    #ОБЯЗАТЕЛЬНО ПРОТЕСТИРОВАТЬ
+                    if int(user.idd) in active_sessions:
+                        await bot.send_message(int(user.idd), f'Имя вашей группы сменилось на {group.name}')
                 await bot.send_message(msg.chat.id, 'Группа переименована')
                 return await save_grps()
-	    #w значит week. Вызывается управление неделями
+	        #w значит week. Вызывается управление неделями
             case 'w':
                 line.pop()
-		#Если нет третьего элемента строки, то аргументов недостаточнр
+		        #Если нет третьего элемента строки, то аргументов недостаточно
                 if not line:
                     return await few_args(msg)
 
                 act = line[-1]
-		#Третий аргумент передаётся в функцию управления неделями
+		        #Третий аргумент передаётся в функцию управления неделями
                 group = await week_manage(msg, group, act, queue)
                 if not isinstance(group, Group):
                     return
                 return await save_grps()
 
-	    #В ином случае выход из manage
+	        #В ином случае выход из manage
             case _:
                 return await wrong_arg(msg, act, 2)
     finally:
@@ -684,7 +698,7 @@ async def rootkey(msg:Message):
                 rkey = [key for key in rootkeys if key.key == rkey][0]
 
                 if rkey.status == 'disabled':
-                    return await bot.send_message(msg.chat.id, 'Ключ уже был отключён')
+                    return await bot.send_message(msg.chat.id, 'Ключ уже отключён')
                 
                 nrkey = rkey
                 nrkey.status = 'disabled'
@@ -726,7 +740,7 @@ async def boost(msg:Message):
 
         rootkey = [key for key in rootkeys if key.key == rkey][0]
         if rootkey.status == 'disabled':
-            return await bot.send_message(msg.chat.id, 'Ключ отключён. Возможно уже был активирован кем-то ещё')
+            return await bot.send_message(msg.chat.id, 'Ключ отключён. Возможно он уже был активирован кем-то ещё')
         nrootkey = rootkey
         nrootkey.status = 'disabled'
         nrootkey.used_by = user.name
@@ -740,6 +754,47 @@ async def boost(msg:Message):
         if msg.chat.id in input_queues:
             del input_queues[msg.chat.id]
 
+#Выбор группы
+@bot.message_handler(commands=['setgrp'])
+async def setgrp(msg:Message):
+    global users, active_sessions, input_queues
+    if msg.chat.id in input_queues:
+        return await busy(msg)
+    if msg.from_user.id not in active_sessions:
+        return await bot.send_message(msg.chat.id, 'Вы не вошли в аккаунт')
+
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
+
+    try:
+        user = active_sessions[msg.from_user.id]
+        await bot.send_message(msg.chat.id, await get_groups_str())
+
+        await bot.send_message(msg.chat.id, 'Выберите группу из списка')
+
+        gnum = await queue.get()
+
+        try: 
+            gnum = int(gnum) - 1
+        except ValueError:
+            return await wrong_arg(msg, gnum, 1)
+        if gnum >= len(grouplist) or gnum < 0:
+            return await wrong_arg(msg, gnum, 1)
+
+        group = grouplist[gnum]
+        #Хранится как строка имени группы во избежание цикличной ссылки
+        user.group = group.name
+        if user not in group.members:
+            group.members.append(user)
+
+        await save_grps()
+        await save_usr(user, msg, kick=False)
+        await bot.send_message(msg.chat.id, f'Ваша группа изменена на {group.name}')
+    finally:
+        if msg.chat.id in input_queues:
+            del input_queues[msg.chat.id]
+
+    
 
 #Получение любого ввода, не являющегося определённой команды
 @bot.message_handler(func=lambda msg: msg.text != None and not msg.text.startswith('/'))
