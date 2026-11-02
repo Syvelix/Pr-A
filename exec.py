@@ -171,12 +171,12 @@ async def save_grps():
         groupfile.write(json.dumps(grdict, indent=4, ensure_ascii=False))
 
 #Сохранение пользователей как json
-async def save_usr(user:User = None, msg:Message = None, newvalue = None, vtype:str = None, kick=True):
+async def save_usr(user:User = None, newvalue = None, vtype:str = None, kick=True):
     if user != None:
         global names_to_id, active_sessions, users
         del names_to_id[user.name]
-        del active_sessions[msg.from_user.id]
-        del users[str(msg.from_user.id)]
+        del active_sessions[int(user.idd)]
+        del users[user.idd]
         if vtype == 'name':
             user.name = newvalue
         elif vtype == 'password':
@@ -185,10 +185,10 @@ async def save_usr(user:User = None, msg:Message = None, newvalue = None, vtype:
         elif vtype == 'acc_type':
             user.acc_type = newvalue
  
-        users[str(msg.from_user.id)] = asdict(user)
-        names_to_id[user.name] = str(msg.from_user.id)
+        users[user.idd] = asdict(user)
+        names_to_id[user.name] = str(user.idd)
         if not kick:
-            active_sessions[msg.from_user.id] = user
+            active_sessions[int(user.idd)] = user
 
     with open(USERS_PATH, 'w') as usersfile:
             usersfile.write(json.dumps(users, indent=4, ensure_ascii=False))
@@ -542,8 +542,7 @@ async def manage(msg:Message):
                 group = grouplist[gnum]
                 for user in group.members:
                     user.group = ""
-                    await save_usr(user, msg, kick=False)
-                    #ОБЯЗАТЕЛЬНО ПРОТЕСТИРОВАТЬ
+                    await save_usr(user, kick=False)
                     if int(user.idd) in active_sessions:
                         await bot.send_message(int(user.idd), f'Группа {group.name} удалена. Выберите другую через /setgrp, если нужно')
                 del grouplist[gnum]
@@ -561,8 +560,7 @@ async def manage(msg:Message):
 
                 for user in group.members:
                     user.group = group.name
-                    await save_usr(user, msg, kick=False)
-                    #ОБЯЗАТЕЛЬНО ПРОТЕСТИРОВАТЬ
+                    await save_usr(user, kick=False)
                     if int(user.idd) in active_sessions:
                         await bot.send_message(int(user.idd), f'Имя вашей группы сменилось на {group.name}')
                 await bot.send_message(msg.chat.id, 'Группа переименована')
@@ -605,7 +603,7 @@ async def rename(msg:Message):
         name = await queue.get()
         if name == '&':
             return await bot.send_message(msg.chat.id, 'Отменено')
-        await save_usr(user, msg, name, 'name')
+        await save_usr(user, name, 'name')
         return await bot.send_message(msg.chat.id, 'Имя изменено. Войдите в аккаунт заново')
     finally:
         if msg.from_user.id in input_queues:
@@ -630,7 +628,7 @@ async def repass(msg:Message):
         if password == '&':
             return await bot.send_message(msg.chat.id, 'Отменено')
 
-        await save_usr(user, msg, password, 'password')
+        await save_usr(user, password, 'password')
         return await bot.send_message(msg.chat.id, 'Пароль изменён. Войдите в аккаунт заново')
     finally:
         if msg.chat.id in input_queues:
@@ -746,7 +744,7 @@ async def boost(msg:Message):
         nrootkey.used_by = user.name
         rootkeys[rootkeys.index(rootkey)] = nrootkey
 
-        await save_usr(user, msg, rootkey.type, 'acc_type', kick = False)
+        await save_usr(user, rootkey.type, 'acc_type', kick = False)
         await save_rkeys()
         user = active_sessions[msg.from_user.id]
         await bot.send_message(msg.chat.id, f'Тип аккаунта изменён на {user.acc_type}')
@@ -788,7 +786,7 @@ async def setgrp(msg:Message):
             group.members.append(user)
 
         await save_grps()
-        await save_usr(user, msg, kick=False)
+        await save_usr(user, kick=False)
         await bot.send_message(msg.chat.id, f'Ваша группа изменена на {group.name}')
     finally:
         if msg.chat.id in input_queues:
