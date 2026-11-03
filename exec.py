@@ -50,6 +50,7 @@ class Week:
     num: int
     days: list[Day]
 
+#Класс для хранения ключей повышения
 @dataclass
 class RootKey:
     key: str
@@ -216,7 +217,7 @@ async def empty_week(num:int):
 async def get_week_str(week:Week):
     str_week = f'Неделя No. {week.num}\n'
     for day in week.days:
-        str_week += f'\n{day.name}:\n'
+        str_week += f'\n{day.num}. {day.name}:\n'
         for lesson in day.lessons:
             str_week += f'{lesson.num}. {lesson.name}, {lesson.cab} у {lesson.teacher}\n'
     return str_week
@@ -280,6 +281,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             try: 
                 wnum = int(line[-1])
             except ValueError:
+                print('it snew')
                 return await wrong_arg(msg, line[-1], 1)
             #Он должен быть корректным номером недели
             if wnum not in group.weeks:
@@ -294,6 +296,24 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             #Второй аргумент - действие над неделей
             act = line[-1]
             match act:
+                #a значит add
+                case 'a':
+                    await bot.send_message(msg.chat.id, 'Введите имя дня')
+                    name = await queue.get()
+                    await bot.send_message(msg.chat.id, 'Введите номер дня')
+                    num = await queue.get()
+                    try:
+                        num = int(num)
+                    except ValueError:
+                        return await wrong_arg(msg, num, 1)
+
+                    day = Day(int(num), name, [])
+                    week.days.append(day)
+                    #Пересортировка списка дней по ключу номера дня num
+                    week.days = list(sorted(week.days, key=lambda day: day.num))
+                    group.weeks[wnum] = week
+                    await bot.send_message(msg.chat.id, f'День {day.name} добавлен в расписание недели {week.num}')
+                    return group
                 #n значит num
                 case 'n':
                     await bot.send_message(msg.chat.id, 'Введите новый номер недели')
@@ -303,7 +323,8 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                     except ValueError:
                         return await wrong_arg(msg, num, 2)
                     week.num = int(num)
-                    group.weeks[wnum] = week
+                    del group.weeks[wnum]
+                    group.weeks[num] = week
                     await bot.send_message(msg.chat.id, 'Номер недели изменён')
                     return group
                 #d значит delete
@@ -311,10 +332,84 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                     del group.weeks[wnum]
                     await bot.send_message(msg.chat.id, f'Неделя {wnum} удалена')
                     return group
+                #e значит edit
+                case 'e':
+                    week = await day_manage(msg, week, queue)
+                    if not isinstance(week, Week):
+                        return
+                    group.weeks[wnum] = week
+                    return group
+                #s значит show
+                case 's':
+                    return await bot.send_message(msg.chat.id, await get_week_str(week))
                 case _:
                     return await wrong_arg(msg, act, 2)
         case _:
             return await wrong_arg(msg, act, 3)         
+
+async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
+    await bot.send_message(msg.chat.id, await get_week_str(week))
+
+    await bot.send_message(msg.chat.id, 'Введите действие над днём')
+    line = await queue.get()
+    line = line.split(' ')
+    line = list(reversed(line))
+    
+    #Первый аргумент должен быть номером дня в списке week.days
+    try: 
+        dnum = int(line[-1])
+    except ValueError:
+        return await wrong_arg(msg, line[-1], 1)
+    #Он должен быть корректным номером дня
+    if dnum not in [day.num for day in week.days]:
+        return await wrong_arg(msg, line[-1], 1)
+    line.pop()
+    #Если кроме номера дня ничего не передали, то аргументов недостаточно
+    if not line:
+        return await few_args(msg)
+    day = [day for day in week.days if day.num == dnum][0]
+    #Настоящий индекс дня
+    trueind = week.days.index(day)
+
+    #Второй аргумент - действие над днём
+    act = line[-1]
+    match act:
+        #d значит delete
+        case 'd':
+            if len(week.days) == 1:
+                return await bot.send_message(msg.chat.id, 'В неделе должен быть как минимум один день')
+            del week.days[trueind]
+            await bot.send_message(msg.chat.id, f'{day.name} удалён')
+            return week
+        #r значит rename
+        case 'r':
+            await bot.send_message(msg.chat.id, 'Введите новое имя дня')
+            name = await queue.get()
+            day.name = name
+            week.days[trueind] = day
+            await bot.send_message(msg.chat.id, f'Имя дня изменено на {day.name}')
+            return week
+        #n значит num
+        case 'n':
+            await bot.send_message(msg.chat.id, 'Введите новый номер дня')
+            num = await queue.get()
+
+            try:
+                num = int(num)
+            except ValueError:
+                return await wrong_arg(msg, num, 1)
+            if int(num) in [day.num for day in week.days]:
+                await bot.send_message(msg.chat.id, 'Номер уже занят другим днём')
+                return await day_manage(msg, week, queue)
+            
+            day.num = int(num)
+            week.days[trueind] = day
+            #Пересортировка списка дней по ключу номера дня num
+            week.days = list(sorted(week.days, key=lambda day: day.num))
+            await bot.send_message(msg.chat.id, f'Номер дня изменён на {day.num}')
+            return week
+
+
 
 #Команда start/help
 @bot.message_handler(commands=['start', 'help'])
