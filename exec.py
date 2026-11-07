@@ -233,8 +233,9 @@ async def get_weeks_str(group:Group):
 async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
     global grouplist
 
+    oact = act
     match act:
-	#a значит add. Добавляет пустую неделю в группу, возвращает группу
+	    #a значит add. Добавляет пустую неделю в группу, возвращает группу
         case 'a':
             wnum = max(group.weeks.keys(), default=0) + 1
             group.weeks[wnum] = await empty_week(wnum)
@@ -259,10 +260,12 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             try: 
                 wnum = int(wnum)
             except ValueError:
-                return await wrong_arg(msg, wnum, 1)
+                await wrong_arg(msg, wnum, 1)
+                return await week_manage(msg, group, oact, queue)
 	        #Он должен быть корректным номером недели
             if wnum not in group.weeks:
-                return await wrong_arg(msg, wnum, 1)
+                await wrong_arg(msg, wnum, 1)
+                return await week_manage(msg, group, oact, queue)
             
             schedule = await get_week_str(group.weeks[wnum])
             return await bot.send_message(msg.chat.id, schedule)
@@ -272,25 +275,31 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                 return await bot.send_message(msg.chat.id, 'Расписание для группы отсутствует')
             
             await bot.send_message(msg.chat.id, await get_weeks_str(group))
-            await bot.send_message(msg.chat.id, 'Введите действие над неделей')
+            await bot.send_message(msg.chat.id, 'Введите действие над неделей. & для возврата к группам')
             line = await queue.get()
             line = line.split(' ')
             line = list(reversed(line))
 
             #Первый аргумент должен быть номером недели в списке group.weeks
+            if line[-1] == '&':
+                return ''
             try: 
                 wnum = int(line[-1])
             except ValueError:
                 print('it snew')
-                return await wrong_arg(msg, line[-1], 1)
+                await wrong_arg(msg, line[-1], 1)
+                return await week_manage(msg, group, oact, queue)
             #Он должен быть корректным номером недели
             if wnum not in group.weeks:
                 print(wnum, group.weeks)
-                return await wrong_arg(msg, line[-1], 1)
+                await wrong_arg(msg, line[-1], 1)
+                return await week_manage(msg, group, oact, queue)
             line.pop()
             #Если кроме номера недели ничего не передали, то аргументов недостаточно
             if not line:
-                return await few_args(msg)
+                print('it so snew')
+                await few_args(msg)
+                return await week_manage(msg, group, oact, queue)
             week = group.weeks[wnum]
 
             #Второй аргумент - действие над неделей
@@ -321,7 +330,11 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                     try:
                         num = int(num)
                     except ValueError:
-                        return await wrong_arg(msg, num, 2)
+                        await wrong_arg(msg, num, 2)
+                        return await week_manage(msg, group, oact, queue)
+                    if num in group.weeks:
+                        await bot.send_message(msg.chat.id, 'Номер уже занят другой неделей')
+                        return await week_manage(msg, group, oact, queue)
                     week.num = int(num)
                     del group.weeks[wnum]
                     group.weeks[num] = week
@@ -335,38 +348,50 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                 #e значит edit
                 case 'e':
                     week = await day_manage(msg, week, queue)
-                    if not isinstance(week, Week):
+
+                    if week == '&':
                         return
-                    group.weeks[wnum] = week
-                    return group
+                    if isinstance(week, Week):
+                        group.weeks[wnum] = week
+                        return group
+                    return await week_manage(msg, group, oact, queue)
                 #s значит show
                 case 's':
-                    return await bot.send_message(msg.chat.id, await get_week_str(week))
+                    return await bot.send_message(msg.chat.id, await get_week_str(week))      
+                #Иначе повторный вызов week_manage
                 case _:
-                    return await wrong_arg(msg, act, 2)
+                    await wrong_arg(msg, act, 2)
+                    return await week_manage(msg, group, oact, queue)
+        #Иначе повторный вызов week_manage
         case _:
-            return await wrong_arg(msg, act, 3)         
+            await wrong_arg(msg, act, 3)         
+            return ''
 
 async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
     await bot.send_message(msg.chat.id, await get_week_str(week))
 
-    await bot.send_message(msg.chat.id, 'Введите действие над днём')
+    await bot.send_message(msg.chat.id, 'Введите действие над днём. & для возврата к неделям')
     line = await queue.get()
     line = line.split(' ')
     line = list(reversed(line))
     
     #Первый аргумент должен быть номером дня в списке week.days
+    if line[-1] == '&':
+        return ''
     try: 
         dnum = int(line[-1])
     except ValueError:
-        return await wrong_arg(msg, line[-1], 1)
+        await wrong_arg(msg, line[-1], 1)
+        return await day_manage(msg, week, queue)
     #Он должен быть корректным номером дня
     if dnum not in [day.num for day in week.days]:
-        return await wrong_arg(msg, line[-1], 1)
+        await wrong_arg(msg, line[-1], 1)
+        return await day_manage(msg, week, queue)
     line.pop()
     #Если кроме номера дня ничего не передали, то аргументов недостаточно
     if not line:
-        return await few_args(msg)
+        await few_args(msg)
+        return await day_manage(msg, week, queue)
     day = [day for day in week.days if day.num == dnum][0]
     #Настоящий индекс дня
     trueind = week.days.index(day)
@@ -397,7 +422,8 @@ async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
             try:
                 num = int(num)
             except ValueError:
-                return await wrong_arg(msg, num, 1)
+                await wrong_arg(msg, num, 1)
+                return await day_manage(msg, week, queue)
             if int(num) in [day.num for day in week.days]:
                 await bot.send_message(msg.chat.id, 'Номер уже занят другим днём')
                 return await day_manage(msg, week, queue)
@@ -408,8 +434,14 @@ async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
             week.days = list(sorted(week.days, key=lambda day: day.num))
             await bot.send_message(msg.chat.id, f'Номер дня изменён на {day.num}')
             return week
+        case _:
+            await wrong_arg(msg, act, 2)
+            return await day_manage(msg, week, queue)
 
-
+async def clear_queue(msg:Message):
+    global input_queues
+    if msg.chat.id in input_queues:
+        del input_queues[msg.chat.id]
 
 #Команда start/help
 @bot.message_handler(commands=['start', 'help'])
@@ -456,8 +488,7 @@ async def reg(msg:Message):
         await bot.reply_to(msg, "Регистрация успешна!")
         print(names_to_id)
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда входа в аккаунт
 @bot.message_handler(commands=['log'])
@@ -491,8 +522,7 @@ async def log(msg:Message):
         print(active_sessions)
         await bot.send_message(msg.chat.id, f'Вы вошли как {active_sessions[msg.from_user.id].name}')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда выхода из аккаунта
 @bot.message_handler(commands=['unlog'])
@@ -537,8 +567,7 @@ async def acc_del(msg:Message):
         else:
             await bot.send_message(msg.chat.id, 'Удаление отменено')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
     print(users)
     print(names_to_id)
@@ -577,8 +606,7 @@ async def mkgrp(msg:Message):
 
         await bot.send_message(msg.chat.id, f'Группа {group.name} создана. Используйте /manage для управления')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда для управления группами
 #Требуется тип аккаунта teacher или root
@@ -599,10 +627,9 @@ async def manage(msg:Message):
 
     await bot.send_message(msg.chat.id, strgroups)
 
+    queue = asyncio.Queue()
+    input_queues[msg.chat.id] = queue
     try:
-        queue = asyncio.Queue()
-        input_queues[msg.chat.id] = queue
-
         await bot.send_message(msg.chat.id, 'Введите действие над группой или & для отмены.\nДля справки используйте /manhelp')
 
 	    #Аргументы передаются через пробел
@@ -618,10 +645,14 @@ async def manage(msg:Message):
         try: 
             gnum = int(line[-1]) - 1
         except ValueError:
-            return await wrong_arg(msg, line[-1], 1)
+            await wrong_arg(msg, line[-1], 1)
+            await clear_queue(msg)
+            return await manage(msg)
 	    #Он должен быть корректным номером группы
         if gnum >= len(grouplist) or gnum < 0:
-            return await wrong_arg(msg, line[-1], 1)
+           await wrong_arg(msg, line[-1], 1)
+           await clear_queue(msg)
+           return await manage(msg)
         line.pop()
 	    #Если кроме номера группы ничего не передали, то аргументов недостаточно
         if not line:
@@ -669,17 +700,22 @@ async def manage(msg:Message):
 
                 act = line[-1]
 		        #Третий аргумент передаётся в функцию управления неделями
+                ogrp = group
                 group = await week_manage(msg, group, act, queue)
-                if not isinstance(group, Group):
-                    return
-                return await save_grps()
+                
+                if group == '&':
+                    return await bot.reply_to(msg, 'Отменено')
+                if isinstance(group, Group):
+                    return await save_grps()
+                await clear_queue(msg)
+                return await manage(msg)
 
-	        #В ином случае выход из manage
+	        #В ином случае повторный вызов manage
             case _:
-                return await wrong_arg(msg, act, 2)
+                await wrong_arg(msg, act, 2)
+                return await manage(msg)
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда смены имени
 @bot.message_handler(commands=['rename'])
@@ -726,8 +762,7 @@ async def repass(msg:Message):
         await save_usr(user, password, 'password')
         return await bot.send_message(msg.chat.id, 'Пароль изменён. Войдите в аккаунт заново')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда для создания ключей повышения
 #Доступна только для root-аккаунтов
@@ -802,8 +837,7 @@ async def rootkey(msg:Message):
                 return await wrong_arg(msg, act, 1)
         await save_rkeys()
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Команда повышения аккаунта
 @bot.message_handler(commands=['boost'])
@@ -844,8 +878,7 @@ async def boost(msg:Message):
         user = active_sessions[msg.from_user.id]
         await bot.send_message(msg.chat.id, f'Тип аккаунта изменён на {user.acc_type}')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
 #Выбор группы
 @bot.message_handler(commands=['setgrp'])
@@ -884,8 +917,7 @@ async def setgrp(msg:Message):
         await save_usr(user, kick=False)
         await bot.send_message(msg.chat.id, f'Ваша группа изменена на {group.name}')
     finally:
-        if msg.chat.id in input_queues:
-            del input_queues[msg.chat.id]
+       await clear_queue(msg)
 
     
 
