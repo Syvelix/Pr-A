@@ -13,6 +13,29 @@ USERS_NAME_TO_ID_PATH = Path('./Data/user_name_to_id.json').resolve()
 GROUPS_PATH = Path('./Data/groups.json').resolve()
 ROOTKEYS_PATH = Path('./Data/rootkeys.json').resolve()
 
+MANHELP_STR = '''Список команд для управления группами (номер группы + команда):
+d - удалить группу
+r - переименовать группу
+w - управление неделями группы:
+
+Список команд для управления неделями (номер группы + w + команда):
+a - добавить пустую неделю
+l - отобразить список недель
+s - посмотреть расписание недели
+e - редактировать неделю:
+
+Список команд редактирования недели (номер недели + команда):
+a - добавить день недели (со сдвигом)
+n - изменить номер недели
+d - удалить неделю
+s - отобразить неделю
+e - редактировать день недели:
+
+Список команд редактирования дня недели (номер дня + команда):
+d - удалить день
+r - переименовать день
+n - изменить номер дня'''
+
 #Класс для хранения пользователей
 @dataclass
 class User:
@@ -919,7 +942,11 @@ async def setgrp(msg:Message):
     finally:
        await clear_queue(msg)
 
-    
+@bot.message_handler(commands=['manhelp'])
+async def manhelp(msg):
+    if msg.from_user.id not in active_sessions:
+        return await bot.send_message(msg.chat.id, 'Вы не вошли в аккаунт')
+    await bot.send_message(msg.chat.id, MANHELP_STR)
 
 #Получение любого ввода, не являющегося определённой команды
 @bot.message_handler(func=lambda msg: msg.text != None and not msg.text.startswith('/'))
