@@ -1,8 +1,9 @@
-import asyncio, pickle, json
+import asyncio, pickle, json, logging, requests
 from hashlib import sha256
 from dacite import from_dict, Config
 from pathlib import Path
 from dataclasses import dataclass, asdict
+from telebot import logger, asyncio_helper
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CopyTextButton, CallbackQuery
 from random import randint
@@ -150,7 +151,9 @@ else:
     with open(TOKEN_PATH, 'wb') as token_file:
         pickle.dump(TOKEN, token_file)
 
-bot = AsyncTeleBot(TOKEN);
+bot = AsyncTeleBot(TOKEN)
+asyncio_helper.proxy = 'http://127.0.0.1:9060'
+logger.setLevel(logging.WARN)
 
 #Если во время выполнения команды запрашивают ещё одну
 async def busy(msg):
