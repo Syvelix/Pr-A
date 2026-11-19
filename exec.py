@@ -404,6 +404,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             await wrong_arg(msg, act, 3)         
             return ''
 
+#Управление днями
 async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
     await bot.send_message(msg.chat.id, await get_week_str(week), parse_mode='Markdown')
 
@@ -515,6 +516,7 @@ async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
             await wrong_arg(msg, act, 2)
             return await day_manage(msg, week, queue)
 
+#Управление парами
 async def lesson_manage(msg:Message, day:Day, queue:asyncio.Queue):
     await bot.send_message(msg.chat.id, await get_day_str(day), parse_mode='Markdown')
 
