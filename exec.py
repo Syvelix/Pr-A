@@ -60,6 +60,7 @@ class Lesson:
     cab: str
     num: int
     teacher: str
+    kind: str
 
 #Класс для хранения дней недели
 @dataclass
@@ -241,11 +242,14 @@ async def empty_week(num:int):
 
 #Красивая строка с расписанием нндели
 async def get_week_str(week:Week):
-    str_week = f'Неделя No. {week.num}\n'
+    str_week = f'Неделя №. {week.num}\n'
     for day in week.days:
-        str_week += f'\n{day.num}. {day.name}:\n'
+        str_week += f'\n№{day.num}. {day.name}:\n\n'
+        if not day.lessons:
+            str_week += 'Пар нет\n'
+            continue
         for lesson in day.lessons:
-            str_week += f'{lesson.num}. {lesson.name}, {lesson.cab} у {lesson.teacher}\n'
+            str_week += f'`{lesson.num}. {lesson.kind} по {lesson.name} в {lesson.cab} аудитории у {lesson.teacher}\n`'
     return str_week
 
 #Красивый список номеров учебных недель
@@ -254,6 +258,15 @@ async def get_weeks_str(group:Group):
     for week in sorted(group.weeks.values(), key=lambda week: week.num):
         str_weeks += f'{week.num}.\n'
     return str_weeks
+
+async def get_day_str(day:Day):
+    str_day = f'День №. {day.num}\n\n'
+    for lesson in day.lessons:
+        str_day += f'`{lesson.num}. {lesson.kind} по {lesson.name} в {lesson.cab} аудитории у {lesson.teacher}\n`'
+        if not day.lessons:
+            str_day += 'Пар нет\n'
+            continue
+    return str_day
 
 #Управление неделями
 async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
@@ -294,7 +307,8 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                 return await week_manage(msg, group, oact, queue)
             
             schedule = await get_week_str(group.weeks[wnum])
-            return await bot.send_message(msg.chat.id, schedule)
+            await bot.send_message(msg.chat.id, schedule, parse_mode='Markdown')
+            return '&'
         #e значит edit
         case 'e':
             if not group.weeks:
@@ -380,10 +394,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
                     if isinstance(week, Week):
                         group.weeks[wnum] = week
                         return group
-                    return await week_manage(msg, group, oact, queue)
-                #s значит show
-                case 's':
-                    return await bot.send_message(msg.chat.id, await get_week_str(week))      
+                    return await week_manage(msg, group, oact, queue)    
                 #Иначе повторный вызов week_manage
                 case _:
                     await wrong_arg(msg, act, 2)
@@ -394,7 +405,7 @@ async def week_manage(msg:Message, group:Group, act:str, queue:asyncio.Queue):
             return ''
 
 async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
-    await bot.send_message(msg.chat.id, await get_week_str(week))
+    await bot.send_message(msg.chat.id, await get_week_str(week), parse_mode='Markdown')
 
     await bot.send_message(msg.chat.id, 'Введите действие над днём. & для возврата к неделям')
     line = await queue.get()
@@ -425,6 +436,36 @@ async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
     #Второй аргумент - действие над днём
     act = line[-1]
     match act:
+        #a значит add (создаётся пара)
+        case 'a':
+            await bot.send_message(msg.chat.id, 'Введите название пары')
+            name = await queue.get()
+            
+            await bot.send_message(msg.chat.id, 'Введите номер пары')
+            num = await queue.get()
+            try:
+                num = int(num)
+            except:
+                await bot.send_message(msg.chat.id, 'Это не число')
+                return await day_manage(msg, week, queue)
+            if num <= 0:
+                await bot.send_message(msg.chat.id, 'Номер должен быть больше 0')
+                return await day_manage(msg, week, queue)
+
+            await bot.send_message(msg.chat.id, 'Введите аудиторию')
+            cab = await queue.get()
+
+            await bot.send_message(msg.chat.id, 'Введите имя преподавателя')
+            teacher = await queue.get()
+
+            await bot.send_message(msg.chat.id, 'Введите тип пары')
+            kind = await queue.get()
+
+            day.lessons.append(Lesson(name, cab, int(num), teacher, kind))
+            day.lessons = list(sorted(day.lessons, key=lambda lesson: lesson.num))
+            week.days[trueind] = day
+            await bot.send_message(msg.chat.id, f'Пара {name} добавлена в день {day.name}')
+            return week
         #d значит delete
         case 'd':
             if len(week.days) == 1:
@@ -460,10 +501,114 @@ async def day_manage(msg:Message, week:Week, queue:asyncio.Queue):
             week.days = list(sorted(week.days, key=lambda day: day.num))
             await bot.send_message(msg.chat.id, f'Номер дня изменён на {day.num}')
             return week
+        #e значит edit
+        case 'e':
+            day = await lesson_manage(msg, day, queue)
+
+            if day == '&':
+                return
+            if isinstance(day, Day):
+                week.days[trueind] = day
+                return week
+            return await day_manage(msg, week, queue)     
         case _:
             await wrong_arg(msg, act, 2)
             return await day_manage(msg, week, queue)
 
+async def lesson_manage(msg:Message, day:Day, queue:asyncio.Queue):
+    await bot.send_message(msg.chat.id, await get_day_str(day), parse_mode='Markdown')
+
+    await bot.send_message(msg.chat.id, 'Введите действие над парой. & для возврата к дням')
+    line = await queue.get()
+    line = line.split(' ')
+    line = list(reversed(line))
+
+    #Первый аргумент должен быть номером пары в списке day.lessons
+    if line[-1] == '&':
+        return ''
+    try: 
+        lnum = int(line[-1])
+    except ValueError:
+        await wrong_arg(msg, line[-1], 1)
+        return await lesson_manage(msg, day, queue)
+    #Он должен быть корректным номером пары
+    if lnum not in [lesson.num for lesson in day.lessons]:
+        await wrong_arg(msg, line[-1], 1)
+        return await lesson_manage(msg, day, queue)
+    line.pop()
+    #Если кроме номера дня ничего не передали, то аргументов недостаточно
+    if not line:
+        await few_args(msg)
+        return await lesson_manage(msg, day, queue)
+    lesson = [lesson for lesson in day.lessons if lesson.num == lnum][0]
+    #Настоящий индекс пары
+    trueind = day.lessons.index(lesson)
+
+    #Второй аргумент - действие над парой
+    act = line[-1]
+    match act:
+        #d значит delete
+        case 'd':
+            del day.lessons[trueind]
+            await bot.send_message(msg.chat.id, f'Пара №.{lesson.num} удалена')
+            return day
+        #r значит rename
+        case 'r':
+            await bot.send_message(msg.chat.id, 'Введите название пары')
+            name = await queue.get()
+            lesson.name = name
+            day.lessons[trueind] = lesson
+            await bot.send_message(msg.chat.id, 'Имя пары изменено')
+            return day
+        #n значит num
+        case 'n':
+            await bot.send_message(msg.chat.id, 'Введите номер пары')
+            num = await queue.get()
+
+            try:
+                num = int(num)
+            except:
+                await bot.send_message(msg.chat.id, 'Это не число')
+                return await lesson_manage(msg, day, queue)
+            if num <= 0:
+                await bot.send_message(msg.chat.id, 'Номер должен быть больше 0')
+                return await lesson_manage(msg, day, queue)
+
+            lesson.num = int(num)
+            day.lessons[trueind] = lesson
+            #Сортировка по номерам дней
+            day.lessons = list(sorted(day.lessons, key=lambda lesson: lesson.num))
+            await bot.send_message(msg.chat.id, 'Номер пары изменён')
+            return day
+        #c значит cab
+        case 'c':
+            await bot.send_message(msg.chat.id, 'Введите номер аудитории')
+            cab = await queue.get()
+            lesson.cab = cab
+            day.lessons[trueind] = lesson
+            await bot.send_message(msg.chat.id, 'Номер аудитории изменён')
+            return day
+        #t значит teacher
+        case 't':
+            await bot.send_message(msg.chat.id, 'Введите имя преподавателя')
+            teacher = await queue.get()
+            lesson.teacher = teacher
+            day.lessons[trueind] = lesson
+            await bot.send_message(msg.chat.id, 'Имя преподавателя изменено')
+            return day
+        #k значит kind
+        case 'k':
+            await bot.send_message(msg.chat.id, 'Введите вид пары')
+            kind = await queue.get()
+            lesson.kind = kind
+            day.lessons[trueind] = lesson
+            await bot.send_message(msg.chat.id, 'Вид пары изменён')
+            return day
+        case _:
+            await wrong_arg(msg, act, 2)
+            return await lesson_manage(msg, day, queue)
+    
+#Команда очитски очереди
 async def clear_queue(msg:Message):
     global input_queues
     if msg.chat.id in input_queues:
@@ -682,7 +827,9 @@ async def manage(msg:Message):
         line.pop()
 	    #Если кроме номера группы ничего не передали, то аргументов недостаточно
         if not line:
-            return await few_args(msg)
+            await few_args(msg)
+            await clear_queue(msg)
+            return await manage(msg)
         group = grouplist[gnum]
 
 	    #Второй аргумент - первичное действие
